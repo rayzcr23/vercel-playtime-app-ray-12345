@@ -1,0 +1,25 @@
+import { GoogleGenerativeAI } from '@google/generative-ai';
+const API_KEY = process.env.GEMINI_API_KEY;
+const genAI = new GoogleGenerativeAI(API_KEY);
+
+export default async function handler(request, response) {
+  response.setHeader('Access-Control-Allow-Origin', '*');
+  response.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  response.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  if (request.method === 'OPTIONS') { return response.status(200).end(); }
+  try {
+    const body = typeof request.body === 'string' ? JSON.parse(request.body) : request.body;
+    const imageBase64 = body.image;
+    if (!imageBase64) { throw new Error('No image data provided.'); }
+    const prompt = 'You are an expert AI test grader. Analyze the image and extract two numbers: 1. "incorrect": The number of incorrect answers, usually circled in red at the top (e.g., "-8" or "3"). 2. "total": The highest question number on the entire test page. Provide the output ONLY in a strict JSON format like this: {"incorrect": 8, "total": 34}';
+    const imagePart = { inlineData: { data: imageBase64, mimeType: 'image/jpeg' } };
+    const model = genAI.getGenerativeModel({ model: 'gemini-1.5-pro-latest' });
+    const result = await model.generateContent([prompt, imagePart]);
+    const responseText = result.response.text();
+    const jsonResponse = JSON.parse(responseText.replace(/```json|```/g, '').trim());
+    return response.status(200).json(jsonResponse);
+  } catch (error) {
+    console.error('Error processing image:', error);
+    return response.status(500).json({ error: 'Failed to process image with AI.', details: error.message });
+  }
+}
