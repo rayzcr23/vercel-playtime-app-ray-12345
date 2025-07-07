@@ -1,80 +1,44 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Vercel AI Playtime Calculator</title>
-    <!-- Add the same styles as before, or create your own! -->
-    <style>
-        body { font-family: sans-serif; display: flex; justify-content: center; align-items: center; min-height: 100vh; background-color: #f0f2f5; }
-        .app-container { background-color: white; padding: 40px; border-radius: 12px; box-shadow: 0 8px 25px rgba(0,0,0,0.1); text-align: center; max-width: 500px; }
-        #loadingSpinner { border: 4px solid #f3f3f3; border-top: 4px solid #6f42c1; border-radius: 50%; width: 24px; height: 24px; animation: spin 1s linear infinite; margin: 20px auto; }
-        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-        .hidden { display: none; }
-        button { background: #6f42c1; color: white; border: none; padding: 12px 20px; border-radius: 8px; cursor: pointer; }
-        button:disabled { background: #ccc; }
-        #result { margin-top: 20px; padding: 20px; background-color: #e9f7ef; border-left: 5px solid #28a745; text-align: left; }
-    </style>
-</head>
-<body>
-    <div class="app-container">
-        <h1>Vercel AI Calculator</h1>
-        <p>Upload your test and let Gemini find the score!</p>
-        <input type="file" id="imageUploader" accept="image/*">
-        <button id="scanButton" disabled>Upload an Image First</button>
-        <div id="loadingSpinner" class="hidden"></div>
-        <div id="result" class="hidden"></div>
-    </div>
-    <script>
-        // The URL is now a simple relative path! Vercel handles the rest.
-        const YOUR_BACKEND_URL = '/api/processImage';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 
-        const imageUploader = document.getElementById('imageUploader');
-        const scanButton = document.getElementById('scanButton');
-        const loadingSpinner = document.getElementById('loadingSpinner');
-        const resultDiv = document.getElementById('result');
-        let imageData = null;
+// Get your API Key from Vercel's Environment Variables for security
+const API_KEY = process.env.GEMINI_API_KEY;
+const genAI = new GoogleGenerativeAI(API_KEY);
 
-        imageUploader.addEventListener('change', function() {
-            const file = this.files[0];
-            if (file) {
-                scanButton.disabled = false;
-                scanButton.textContent = 'Let Gemini Scan It!';
-                const reader = new FileReader();
-                reader.onloadend = () => { imageData = reader.result.split(',')[1]; };
-                reader.readAsDataURL(file);
-            }
-        });
+// This is the main function Vercel will run
+export default async function handler(request, response) {
+  // Allow requests from any origin (for CORS)
+  response.setHeader('Access-Control-Allow-Origin', '*');
+  response.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  response.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
-        scanButton.addEventListener('click', async function() {
-            loadingSpinner.classList.remove('hidden');
-            scanButton.disabled = true;
-            try {
-                const response = await fetch(YOUR_BACKEND_URL, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ image: imageData })
-                });
-                if (!response.ok) { throw new Error(`AI Server Error: ${response.statusText}`); }
-                const data = await response.json();
-                calculateAndDisplayPlaytime(data.correct, data.total);
-            } catch (error) {
-                resultDiv.innerHTML = `<p><strong>Error:</strong> ${error.message}</p>`;
-                resultDiv.classList.remove('hidden');
-            } finally {
-                loadingSpinner.classList.add('hidden');
-                scanButton.disabled = false;
-            }
-        });
+  // Handle the browser's pre-flight request for OPTIONS
+  if (request.method === 'OPTIONS') {
+    return response.status(200).end();
+  }
 
-        function calculateAndDisplayPlaytime(correct, total) {
-            const scorePercentage = (correct / total) * 100;
-            const totalPlaytime = 30 + (correct * 2) + (scorePercentage >= 90 ? 20 : 0);
-            const hours = Math.floor(totalPlaytime / 60);
-            const minutes = totalPlaytime % 60;
-            resultDiv.innerHTML = `<h2>AI Scan Complete!</h2><p>Score: <strong>${correct}/${total}</strong></p><h3>Total Playtime: ${hours} hour(s) and ${minutes} minute(s)</h3>`;
-            resultDiv.classList.remove('hidden');
-        }
-    </script>
-</body>
-</html>
+  try {
+    // --- THIS IS THE NEW, MORE ROBUST PART ---
+    // Vercel might auto-parse the body, or it might be a raw string.
+    // This code handles both cases.
+    const body = typeof request.body === 'string' ? JSON.parse(request.body) : request.body;
+    const imageBase64 = body.image;
+    // ------------------------------------------
+
+    if (!imageBase64) {
+      throw new Error('No image data provided in the request body.');
+    }
+
+    const prompt = 'You are an expert AI test grader. Analyze the image and extract two numbers: 1. "incorrect": The number of incorrect answers, usually circled in red at the top (e.g., "-8" or "3"). 2. "total": The highest question number on the entire test page. Provide the output ONLY in a strict JSON format like this: {"incorrect": 8, "total": 34}';
+    const imagePart = { inlineData: { data: imageBase64, mimeType: 'image/jpeg' } };
+    const model = genAI.getGenerativeModel({ model: 'gemini-1.5-pro-latest' });
+    const result = await model.generateContent([prompt, imagePart]);
+    const responseText = result.response.text();
+    const jsonResponse = JSON.parse(responseText.replace(/```json|```/g, '').trim());
+
+    return response.status(200).json(jsonResponse);
+  } catch (error) {
+    // Now we will log the error so we can see it in the Vercel logs
+    console.error('SERVER_ERROR:', error);
+    return response.status(500).json({ error: 'Failed to process image with AI.', details: error.message });
+  }
+}
