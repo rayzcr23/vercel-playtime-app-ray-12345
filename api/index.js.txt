@@ -1,50 +1,55 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 
+// This is the main function Vercel will run
 export default async function handler(req, res) {
   // --- CORS Headers ---
-  res.setHeader('Access-Control-Allow-Credentials', true);
-  res.setHeader('Access-Control-Allow-Origin', '*'); // Allow any origin
-  res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,PATCH,DELETE,POST,PUT');
-  res.setHeader(
-    'Access-Control-Allow-Headers',
-    'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version'
-  );
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
-  // --- Handle pre-flight OPTIONS request ---
   if (req.method === 'OPTIONS') {
     res.status(200).end();
     return;
   }
 
-  // --- Main Logic ---
-  if (req.method === 'POST') {
-    try {
-      const { image: imageBase64 } = req.body;
+  // --- Main Logic Wrapped in a Master Try/Catch ---
+  try {
+    console.log('--- SERVER LOG: Function handler started. ---');
 
-      if (!imageBase64) {
-        return res.status(400).json({ error: 'No image data provided.' });
-      }
-
-      const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-      const model = genAI.getGenerativeModel({ model: 'gemini-1.5-pro-latest' });
-      
-      const prompt = 'You are an expert AI test grader. Analyze the image and extract two numbers: 1. "incorrect": The number of incorrect answers, usually circled in red at the top (e.g., "-8" or "3"). 2. "total": The highest question number on the entire test page. Provide the output ONLY in a strict JSON format like this: {"incorrect": 8, "total": 34}';
-      const imagePart = {
-        inlineData: { data: imageBase64, mimeType: 'image/jpeg' },
-      };
-
-      const result = await model.generateContent([prompt, imagePart]);
-      const responseText = result.response.text();
-      const jsonResponse = JSON.parse(responseText.replace(/```json|```/g, '').trim());
-
-      return res.status(200).json(jsonResponse);
-
-    } catch (error) {
-      console.error('SERVER_ERROR:', error);
-      return res.status(500).json({ error: 'Internal Server Error', details: error.message });
+    // ULTIMATE DEBUGGING LOG 1: Check if the environment variable exists at all.
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      console.error('--- SERVER_ERROR: GEMINI_API_KEY is NOT FOUND in environment variables! ---');
+      return res.status(500).json({ error: 'Server configuration error: API key is missing.' });
     }
-  } else {
-    res.setHeader('Allow', ['POST']);
-    res.status(405).end(`Method ${req.method} Not Allowed`);
+    console.log('--- SERVER LOG: API Key found in environment. Length:', apiKey.length);
+
+    // Now, initialize the AI
+    const genAI = new GoogleGenerativeAI(apiKey);
+    console.log('--- SERVER LOG: GoogleGenerativeAI initialized successfully. ---');
+
+    const { image: imageBase64 } = req.body;
+    if (!imageBase64) {
+      console.error('--- SERVER_ERROR: No image data received in the request body. ---');
+      return res.status(400).json({ error: 'No image data provided.' });
+    }
+    console.log('--- SERVER LOG: Image data received. ---');
+    
+    const model = genAI.getGenerativeModel({ model: 'gemini-1.5-pro-latest' });
+    const prompt = 'You are an expert AI test grader. Analyze the image and extract two numbers: 1. "incorrect": The number of incorrect answers, usually circled in red at the top (e.g., "-8" or "3"). 2. "total": The highest question number on the entire test page. Provide the output ONLY in a strict JSON format like this: {"incorrect": 8, "total": 34}';
+    const imagePart = { inlineData: { data: imageBase64, mimeType: 'image/jpeg' } };
+    
+    console.log('--- SERVER LOG: Sending request to Gemini... ---');
+    const result = await model.generateContent([prompt, imagePart]);
+    const responseText = result.response.text();
+    const jsonResponse = JSON.parse(responseText.replace(/```json|```/g, '').trim());
+
+    console.log('--- SERVER LOG: Success! Sending data back to frontend. ---');
+    return res.status(200).json(jsonResponse);
+
+  } catch (error) {
+    // This will now catch ANY error that happens anywhere in the process.
+    console.error('--- SERVER_ERROR (Caught in final catch block): ---', error);
+    return res.status(500).json({ error: 'An unexpected error occurred.', details: error.message });
   }
 }
